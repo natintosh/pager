@@ -13,11 +13,11 @@ class PagingData<T> {
 class Page<Key, Value> {
   final List<Value> data;
 
-  final Key? prevKey;
+  final Key? key;
 
   final Key? nextKey;
 
-  Page(this.data, this.prevKey, this.nextKey);
+  Page(this.data, this.key, this.nextKey);
 
   bool isEmpty() => data.isEmpty;
 

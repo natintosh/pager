@@ -22,7 +22,7 @@ class PagingSource<Key, Value> {
         localSource: (a) => localSource(a).map((event) {
           final newData = event.data;
           newData.sort(compare);
-          return Page(newData, event.prevKey, event.nextKey);
+          return Page(newData, event.key, event.nextKey);
         }),
         remoteMediator: remoteMediator
     );
@@ -33,7 +33,7 @@ class PagingSource<Key, Value> {
     return PagingSource(
         localSource: (params) => localSource(params).map((event) {
           final newData = event.data.where(predicate).toList();
-          return Page(newData, event.prevKey, event.nextKey);
+          return Page(newData, event.key, event.nextKey);
         }),
         remoteMediator: remoteMediator
     );
@@ -58,7 +58,7 @@ class PagingSource<Key, Value> {
     return PagingSource(
         localSource: (params) => localSource(params).map((event) {
           final newData = event.data.map(predicate).toList();
-          return Page(newData, event.prevKey, event.nextKey);
+          return Page(newData, event.key, event.nextKey);
         }),
       // remoteMediator: remoteMediator
     );

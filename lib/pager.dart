@@ -16,21 +16,20 @@ import 'paging/paging_state.dart';
 import 'paging/remote_mediator.dart';
 import 'package:collection/collection.dart';
 
-
 /// @author Paul Okeke
 /// A Paging Library
 
 typedef PagingBuilder<T> = Widget Function(BuildContext context, T value);
 
 class Pager<K, T> extends StatefulWidget {
-  const Pager({
-    Key? key,
-    required this.source,
-    required this.builder,
-    this.pagingConfig = const PagingConfig.fromDefault(),
-    this.scrollController,
-    this.keepAlive = false
-  }) : super(key: key);
+  const Pager(
+      {Key? key,
+      required this.source,
+      required this.builder,
+      this.pagingConfig = const PagingConfig.fromDefault(),
+      this.scrollController,
+      this.keepAlive = false})
+      : super(key: key);
 
   final PagingSource<K, T> source;
 
@@ -43,11 +42,13 @@ class Pager<K, T> extends StatefulWidget {
   final bool keepAlive;
 
   @override
-  State<StatefulWidget> createState() => _PagerState<K,T>();
-
+  State<StatefulWidget> createState() => _PagerState<K, T>();
 }
 
-class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClientMixin {
+class _PagerState<K, T> extends State<Pager<K, T>>
+    with AutomaticKeepAliveClientMixin {
+  ///
+  bool isLoading = false;
 
   ///
   final List<Page<K, T>> _pages = [];
@@ -94,8 +95,7 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
         key,
         (loadType == LoadType.REFRESH)
             ? widget.pagingConfig.initialPageSize
-            : widget.pagingConfig.pageSize
-    );
+            : widget.pagingConfig.pageSize);
   }
 
   @override
@@ -103,6 +103,7 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
     value = PagingData([]);
     _pagingSource = widget.source;
     _remoteMediator = _pagingSource?.remoteMediator;
+    _scrollController = widget.scrollController;
     super.initState();
     _doInitialLoad();
   }
@@ -167,11 +168,10 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
 
     final localSource = widget.source.localSource.call(params);
     final subscription = localSource.listen((page) {
-
       final newData = page.data;
 
       if (_pages.isNotEmpty) {
-        insertOrUpdate(page.prevKey, page);
+        insertOrUpdate(page.key, page);
         return;
       }
 
@@ -187,13 +187,12 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
             .modifyState(LoadType.PREPEND, NotLoading(true));
       }
 
-      insertOrUpdate(page.prevKey, page);
+      insertOrUpdate(page.key, page);
     });
     _pageSubscriptions.putIfAbsent(params.key, () => subscription);
   }
 
   _onAppend(LoadParams<K> params) async {
-
     if (_pageSubscriptions.containsKey(params.key)) {
       return;
     }
@@ -201,18 +200,18 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
     final localSource = widget.source.localSource.call(params);
     StreamSubscription<Page<K, T>>? subscription;
 
-    subscription = localSource.listen((page) {
+    subscription = localSource.listen((currentPage) async {
       if (_pages.isEmpty) {
         subscription?.cancel();
         _pageSubscriptions.remove(params.key);
         return;
       }
 
-      final newData = page.data;
+      final newData = currentPage.data;
       final lastPage = _pages.last;
 
-      if (lastPage.nextKey != page.prevKey) {
-        insertOrUpdate(page.prevKey, page);
+      if (lastPage.nextKey != currentPage.key) {
+        insertOrUpdate(currentPage.key, currentPage);
         return;
       }
 
@@ -224,52 +223,73 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
           .modifyState(LoadType.PREPEND, NotLoading(true));
 
       if (newData.isEmpty || endOfPage) {
-        _requestRemoteLoad(LoadType.APPEND);
+        await _requestRemoteLoad(LoadType.APPEND);
+        _doLoadFromLocal(params);
       }
 
-      insertOrUpdate(page.prevKey, page);
+      insertOrUpdate(currentPage.key, currentPage);
     });
     _pageSubscriptions.putIfAbsent(params.key, () => subscription!);
     dispatchUpdates();
   }
 
-  onPrepend(LoadParams params) {
+  onPrepend(LoadParams params) {}
 
+  _doLoadFromLocal(LoadParams<K> params) {
+    final localSource = widget.source.localSource.call(params);
+
+    localSource.listen((currentPage) async {
+      final newData = currentPage.data;
+
+      final endOfPage = newData.length < widget.pagingConfig.pageSize;
+
+      sourceStates = sourceStates
+          ?.modifyState(LoadType.REFRESH, NotLoading(true))
+          .modifyState(LoadType.APPEND, NotLoading(endOfPage))
+          .modifyState(LoadType.PREPEND, NotLoading(true));
+
+      if (newData.isEmpty) {
+        return;
+      }
+
+      insertOrUpdate(currentPage.key, currentPage);
+    });
+    dispatchUpdates();
   }
 
   /// The next page key to fetch.
   /// If the next key is null that would mean the last page
-  /// data isn't up to the [PagingConfig.pageSize] and thus the [Page.prevKey]
+  /// data isn't up to the [PagingConfig.pageSize] and thus the [Page.key]
   /// will be used instead
   K? get _nextPageKey {
     final lastPage = _pages.lastOrNull;
-    return lastPage?.nextKey ?? lastPage?.prevKey;
+    return lastPage?.nextKey ?? lastPage?.key;
   }
 
-  _requestRemoteLoad(LoadType loadType) async {
+  Future<LoadStates?> _requestRemoteLoad(LoadType loadType) async {
     if (true == mediatorStates?.refresh.endOfPaginationReached ||
         true == mediatorStates?.append.endOfPaginationReached ||
         null == _remoteMediator) {
-      return;
+      return null;
     }
 
     mediatorStates = mediatorStates?.modifyState(loadType, Loading());
 
     final result = await _remoteMediator?.load(
-        loadType, PagingState<K, T>(_nextPageKey, widget.pagingConfig)
-    );
+        loadType, PagingState<K, T>(_nextPageKey, widget.pagingConfig));
 
     if (result is MediatorSuccess) {
       mediatorStates = mediatorStates?.modifyState(
-          loadType, NotLoading(result.endOfPaginationReached)
-      );
-      _doLoad(loadType);
+          loadType, NotLoading(result.endOfPaginationReached));
+      if (loadType == LoadType.REFRESH) {
+        _doLoad(loadType);
+      }
     } else if (result is MediatorError) {
-      mediatorStates = mediatorStates?.modifyState(
-          loadType, Error(result.exception)
-      );
+      mediatorStates =
+          mediatorStates?.modifyState(loadType, Error(result.exception));
       dispatchUpdates();
     }
+    return null;
   }
 
   invalidate({bool dispatch = true}) async {
@@ -284,8 +304,8 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
     final newList = newPage.data;
 
     ///Using The Myer's difference algorithm to find the difference
-    final dataDiffUpdates = calculateListDiff(oldList, newList)
-        .getUpdatesWithData();
+    final dataDiffUpdates =
+        calculateListDiff(oldList, newList).getUpdatesWithData();
 
     final isSame = dataDiffUpdates.isEmpty;
 
@@ -305,7 +325,7 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
       if (_pages.isEmpty) {
         if (!page.isEmpty()) _pages.add(page);
         inserted = true;
-      } else if(_pages.isNotEmpty) {
+      } else if (_pages.isNotEmpty) {
         inserted = !_calculateDiffAndUpdate(_pages.first, page);
       }
     } else {
@@ -317,7 +337,7 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
 
       //TODO: consider using an hashtable for faster look up in 0(1) time
       final oldPage = _pages.firstWhereOrNull((element) {
-        return element.prevKey == prevKey;
+        return element.key == prevKey;
       });
       //TODO: We should not be adding to this page if the previous page is not up to load size
       if (null == oldPage && page.data.isNotEmpty) {
@@ -330,11 +350,12 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
     if (inserted) {
       dispatchUpdates();
     }
+    isLoading = false;
   }
 
   /// It's paramount that this ends before any other subscription is added
   _closeAllSubscriptions() async {
-    if(_pageSubscriptions.isEmpty) return;
+    if (_pageSubscriptions.isEmpty) return;
     await Future.microtask(() async {
       for (final subscription in _pageSubscriptions.entries) {
         await subscription.value.cancel();
@@ -369,10 +390,13 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
     final scrollOffsetPerItem = currentScrollExtent / heightPerItem;
 
     if ((_totalNumberOfItems - scrollOffsetPerItem) <= prefetchDistance) {
-      _doLoad(LoadType.APPEND);
+      if (!isLoading) {
+        isLoading = true;
+        _doLoad(LoadType.APPEND);
+      }
     }
   }
-  
+
   void _registerScrollListener() {
     final scrollController = _scrollController ?? widget.scrollController;
     scrollController?.removeListener(_scrollListener);
@@ -405,9 +429,9 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
     }
     Widget builder = widget.builder(context, value);
     if (builder is ScrollView) {
-      _scrollController = builder.controller;
+      _scrollController ??= builder.controller;
     } else {
-      _scrollController = widget.scrollController;
+      _scrollController ??= widget.scrollController;
     }
     _registerScrollListener();
     return builder;
@@ -418,5 +442,4 @@ class _PagerState<K, T> extends State<Pager<K, T>> with AutomaticKeepAliveClient
     invalidate(dispatch: false);
     super.dispose();
   }
-
 }
