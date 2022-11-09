@@ -22,13 +22,12 @@ import 'package:collection/collection.dart';
 typedef PagingBuilder<T> = Widget Function(BuildContext context, T value);
 
 class Pager<K, T> extends StatefulWidget {
-  const Pager(
-      {Key? key,
-      required this.source,
-      required this.builder,
-      this.pagingConfig = const PagingConfig.fromDefault(),
-      this.scrollController,
-      this.keepAlive = false})
+  const Pager({Key? key,
+    required this.source,
+    required this.builder,
+    this.pagingConfig = const PagingConfig.fromDefault(),
+    this.scrollController,
+    this.keepAlive = false})
       : super(key: key);
 
   final PagingSource<K, T> source;
@@ -47,8 +46,6 @@ class Pager<K, T> extends StatefulWidget {
 
 class _PagerState<K, T> extends State<Pager<K, T>>
     with AutomaticKeepAliveClientMixin {
-  ///
-  bool isLoading = false;
 
   ///
   final List<Page<K, T>> _pages = [];
@@ -81,7 +78,7 @@ class _PagerState<K, T> extends State<Pager<K, T>>
 
   /// Holds a subscription for each page fetched
   final LinkedHashMap<K?, StreamSubscription<Page<K, T>>> _pageSubscriptions =
-      LinkedHashMap();
+  LinkedHashMap();
 
   ///
   PagingSource<K, T>? _pagingSource;
@@ -287,6 +284,9 @@ class _PagerState<K, T> extends State<Pager<K, T>>
     } else if (result is MediatorError) {
       mediatorStates =
           mediatorStates?.modifyState(loadType, Error(result.exception));
+      if (_pageSubscriptions.containsKey(_nextPageKey)) {
+        _pageSubscriptions.remove(_nextPageKey);
+      }
       dispatchUpdates();
     }
     return null;
@@ -305,7 +305,7 @@ class _PagerState<K, T> extends State<Pager<K, T>>
 
     ///Using The Myer's difference algorithm to find the difference
     final dataDiffUpdates =
-        calculateListDiff(oldList, newList).getUpdatesWithData();
+    calculateListDiff(oldList, newList).getUpdatesWithData();
 
     final isSame = dataDiffUpdates.isEmpty;
 
@@ -350,14 +350,15 @@ class _PagerState<K, T> extends State<Pager<K, T>>
     if (inserted) {
       dispatchUpdates();
     }
-    isLoading = false;
   }
 
   /// It's paramount that this ends before any other subscription is added
   _closeAllSubscriptions() async {
     if (_pageSubscriptions.isEmpty) return;
+
+    final subs = List.from(_pageSubscriptions.entries);
     await Future.microtask(() async {
-      for (final subscription in _pageSubscriptions.entries) {
+      for (final subscription in subs) {
         await subscription.value.cancel();
       }
       _pageSubscriptions.clear();
@@ -390,10 +391,7 @@ class _PagerState<K, T> extends State<Pager<K, T>>
     final scrollOffsetPerItem = currentScrollExtent / heightPerItem;
 
     if ((_totalNumberOfItems - scrollOffsetPerItem) <= prefetchDistance) {
-      if (!isLoading) {
-        isLoading = true;
-        _doLoad(LoadType.APPEND);
-      }
+      _doLoad(LoadType.APPEND);
     }
   }
 
